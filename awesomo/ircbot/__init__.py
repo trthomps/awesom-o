@@ -5,8 +5,8 @@ import re
 import threading
 import Queue
 import sys
-from pprint import pprint as pp
 from awesomo import config
+from awesomo import modules
 
 class ircbot(object):
     def __init__(self,config):
@@ -86,20 +86,22 @@ class ircbot(object):
         while True:
             rawline = self.lineHandlerQueue.get()
             self.threadsAvailable -= 1
-            #print "[<H<]" + rawline
             pline = self.parse_line(rawline)
-            #self.print_pline(pline)
 
             if pline["code"] != "":
                 if pline["code"] == "376":
                     for channel in json.loads(self.config.getOption("irc","channels")):
                         self.send("JOIN " + channel)
 
-            if pline["cmd"] != "":
+            elif pline["cmd"] != "":
                 if pline["cmd"] == "PRIVMSG":
-                    if pline["msg"] == "!test":
-                        self.say(pline["target"],"I am the awesom-o bot 4000 running on Python " + str(sys.version.split()[0]) + ". I have " + str(self.threadsAvailable) + "/" + str(self.config.getOption("irc","threads")) + " available not counting this one.")
-                        time.sleep(5)
+                    if pline["msg"][0] == "!":
+                        module,pline["msg"] = pline["msg"].split(' ', 1)
+                        module = module[1:]
+                        if module in dir(modules):
+                            print "[MOD] Running module " + module
+                            self.say(pline["target"],eval("modules." + module + "." + module + "(" + str(pline) + ")"))
+
                 if pline["cmd"] == "PING":
                     self.send("PONG " + pline["host"])
 

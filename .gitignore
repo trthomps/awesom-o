@@ -35,4 +35,4 @@ nosetests.xml
 
 *.sqlite
 
-.DS_Store
+*.DS_Store
