@@ -1,3 +1,4 @@
+# coding: utf-8
 import socket
 import json
 import time
@@ -5,19 +6,42 @@ import re
 import threading
 import Queue
 import sys
+import string
+import urllib2
 from awesomo import config
 from awesomo import modules
 
 class ircbot(object):
     def __init__(self,config):
         self.config = config
+        
+        self.nick = self.config.getOption("irc","nick")
+        self.username = self.config.getOption("irc","username")
+        self.host = self.config.getOption("irc","host")
 
     def send(self,message):
-        print "[>>>]" + message
-        self.sock.send(message + "\r\n")
+        print "[>>>]%s" % message
+        self.sock.send("%s\r\n" % message)
 
     def say(self,to,message):
-        self.send("PRIVMSG " + to + " :" + message)
+        i = 0
+        while True:
+            j = 450
+            
+            if(len(message[i:i+j+1]) > j):
+                while message[i:i+j][-1:] != " ":
+                    j -= 1
+                
+            if message[i+j:i+j+450] != "":
+                toSend = "%s..." % message[i:i+j-1]
+            else:
+                toSend = message[i:i+j]
+            
+            self.send("PRIVMSG %s :%s" % (to, toSend))
+            
+            i += j
+            if message[i:i+j] == "":
+                break
 
     def parse_line(self,line):
         ret = { "nick": "", "user": "", "host": "", "code": "", "cmd": "", "target": "", "msg": "" }
@@ -76,11 +100,8 @@ class ircbot(object):
 
                 return ret
 
-        print "[<E<]" + line
+        print "[<E<]%s" % line
         return ret
-
-    def print_pline(self,ret):
-        print "[<P<]nick: " + ret["nick"] + " | user: " + ret["user"] + " | host: " + ret["host"] + " | code: " + ret["code"] + " | cmd: " + ret["cmd"] + " | target: " + ret["target"] + " | msg: " + ret["msg"]
 
     def handle_line(self):
         while True:
@@ -88,19 +109,51 @@ class ircbot(object):
             self.threadsAvailable -= 1
             pline = self.parse_line(rawline)
 
-            if pline["code"] != "":
+            if pline["code"]:
+            
                 if pline["code"] == "376":
                     for channel in json.loads(self.config.getOption("irc","channels")):
-                        self.send("JOIN " + channel)
+                        self.send("JOIN %s" % channel)
+                
+                if pline["code"] == "433":
+                    self.nick = "%s_" % self.nick
+                    self.send("NICK %s" % self.nick)
 
-            elif pline["cmd"] != "":
+            elif pline["cmd"]:
+            
                 if pline["cmd"] == "PRIVMSG":
+                    if pline["target"][:1] == "#":
+                        sendTo = pline["target"]
+                    else:
+                        sendTo = pline["nick"]
+                
                     if pline["msg"][0] == "!":
-                        module,pline["msg"] = pline["msg"].split(' ', 1)
-                        module = module[1:]
+                        try:
+                            module,pline["msg"] = pline["msg"].split(' ', 1)
+                        except ValueError:
+                            module = pline["msg"]
+                            pline["msg"] = ""
+                        finally:
+                            module = module[1:]
+                        
                         if module in dir(modules):
-                            print "[MOD] Running module " + module
-                            self.say(pline["target"],eval("modules." + module + "." + module + "(" + str(pline) + ")"))
+                            print "[MOD] Running module " + module + "(" + str(pline) + ")"
+                            self.say(sendTo,eval("modules." + module + "." + module + "(" + str(pline) + ")"))
+                            
+                    TLDS = [ string.lower(line.strip()) for line in urllib2.urlopen('http://data.iana.org/TLD/tlds-alpha-by-domain.txt') if line[:1] != "#"  if line[:2] != "XN" ]
+                    urlMatched = re.match(r'(?:^|.* )((?:https?://)?[a-zA-Z0-9.-]+\.(?:%s){1}\S*)(?:$| .*)' % "|".join(TLDS), pline["msg"])
+                    if urlMatched:
+                        try:
+                            html = urllib2.urlopen(urlMatched.group(1)).read().replace('\r','').replace('\n','')
+                        except:
+                            return
+                        titleMatched = re.match('.*<title>(.*)</title>.*',html)
+                        if titleMatched:
+                            if len(urlMatched.group(1) > 50):
+                                shortURL = "" # This will be our bit.ly shorten place
+                            else:
+                                shortURL = ""
+                            self.say(sendTo,"%s%s" % (shortURL, titleMatched.group(1)))
 
                 if pline["cmd"] == "PING":
                     self.send("PONG " + pline["host"])
@@ -110,15 +163,13 @@ class ircbot(object):
 
 
     def run(self):
-        self.joined = False
-
         # Create IRC Socket
         self.sock = socket.socket()
         self.sock.connect( (self.config.getOption("irc","host"), int(self.config.getOption("irc","port"))) )
 
         # Send IDENT info
-        self.send("NICK " + self.config.getOption("irc","nick"))
-        self.send("USER " + self.config.getOption("irc","username") + " " + self.config.getOption("irc","host") + " 8 : Butters' very own robot!")
+        self.send("NICK %s" % self.nick )
+        self.send("USER %s %s 8 : Butters' very own robot!" % (self.username, self.host))
         
         # Create thread pool for handling incoming 
         self.lineHandlerQueue = Queue.Queue()
